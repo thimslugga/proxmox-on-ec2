@@ -1,0 +1,393 @@
+#cloud-config
+# vim: syntax=yaml
+
+disable_ec2_metadata: false
+
+# Runs on each boot
+bootcmd:
+  # Replace default 127.0.0.1 IP in /etc/hosts with private IP address
+  - sed -i'' 's/^[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+\([[:space:]]*[{]{fqdn}}\)/{{ ds.meta_data.local_ipv4 }}\1/' /etc/cloud/templates/hosts.debian.tmpl
+
+package_update: true
+package_upgrade: true
+package_reboot_if_required: false
+
+packages:
+ - libpam-systemd
+ - parted
+ - rsyslog
+ - chrony
+ #- acpi-support
+ #- acpid
+ #- acpi
+ #- plymouth
+ - efibootmgr
+ - tuned
+ - dbus
+ - policykit-1
+ - systemd-container
+ - apt-transport-https
+ - debian-archive-keyring
+ - gnupg2
+ - ca-certificates
+ - wget
+ - curl
+ - sed
+ - lvm2
+ #- zfsutils-linux
+ - btrfs-progs
+ - zstd
+ - bzip2
+ #- cpufrequtils
+ #- bridge-utils
+ #- vlan
+ #- dkms
+ - ethtool
+ - dnsmasq
+ - sudo
+ - acl
+ - attr
+ - whois
+ - dnsutils
+ - bind9-dnsutils
+ - vim-tiny
+ - patch
+ - git-core
+ - rsync
+ - screen
+ - tmux
+ - pigz
+ - awscli
+ - jq
+ - inotify-tools
+
+resize_rootfs: true
+
+hostname: proxmox
+fqdn: proxmox.local
+
+manage_etc_hosts: false
+manage-resolv-conf: false
+#resolv_conf:
+#  nameservers: ['169.254.169.253']
+#  searchdomains:
+#    - ec2.internal
+#  domain: ec2.internal
+#  options:
+#    timeout: 5
+
+timezone: Etc/UTC
+
+disable_root: false
+ssh_pwauth: false
+#ssh_authorized_keys:
+#  - ssh-rsa AAA...
+
+# To create a password, use: mkpasswd --method=SHA-512 --rounds=4096
+users:
+  - default
+  - name: root
+    hashed_passwd: HASHED_PASSWORD_GOES_HERE
+    lock_passwd: false
+#  - name: blockeduser
+#    ssh_redirect_user: true
+
+write_files:
+
+  - path: /etc/hosts
+    owner: root:root
+    permissions: '0644'
+    content: |
+      #127.0.0.1       localhost.localdomain localhost
+      #::1             localhost ip6-localhost ip6-loopback
+      ff02::1         ip6-allnodes
+      ff02::2         ip6-allrouters
+
+  - path: /etc/systemd/resolved.conf.d/00-override.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Resolve]
+      DNS=
+      FallbackDNS=169.254.169.253
+      DNSStubListener=no
+      MulticastDNS=no
+      LLMNR=no
+
+  # DHCP server for vmbr0:
+  #- path: /etc/dnsmasq.d/vmbr0.conf
+  #  owner: root:root
+  #  permissions: '0644'
+  #  content: |
+  #    bogus-priv
+  #    no-resolv
+  #    interface=vmbr0
+  #    dhcp-range=10.10.10.10,10.10.10.254,1h
+  #    dhcp-option=vmbr0,3,10.10.10.1
+  #    dhcp-authoritative
+  #    dhcp-option=252,"\n"
+  #    dhcp-option=vendor:MSFT,2,1i
+  #    dhcp-name-match=set:wpad-ignore,wpad
+  #    dhcp-ignore-names=tag:wpad-ignore
+
+  - path: /etc/chrony/chrony.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      confdir /etc/chrony/conf.d
+      sourcedir /run/chrony-dhcp
+      sourcedir /etc/chrony/sources.d
+      pool 169.254.169.123 iburst
+      keyfile /etc/chrony/chrony.keys
+      driftfile /var/lib/chrony/chrony.drift
+      ntsdumpdir /var/lib/chrony
+      logdir /var/log/chrony
+      maxupdateskew 100.0
+      rtcsync
+      makestep 1 3
+
+  - path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    owner: root:root
+    permissions: '0644'
+    content: |
+      network: {config: disabled}
+
+  - path: /etc/systemd/logind.conf.d/00-override.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Login]
+      HandlePowerKey=poweroff
+      HandlePowerKeyLongPress=poweroff
+      HandleRebootKey=reboot
+      HandleRebootKeyLongPress=poweroff
+      KillUserProcesses=yes
+
+  - path: /etc/systemd/system/getty@tty1.service.d/10-noclear.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Service]
+      TTYVTDisallocate=no
+
+  - path: /etc/default/grub.d/98_proxmox_tune.cfg
+    owner: root:root
+    permissions: '0644'
+    content: |
+      GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX net.naming-scheme=v252 intel_idle.max_cstate=1 processor.max_cstate=1 cpufreq.default_governor=performance nvme_core.io_timeout=4294967295 reboot=bios hibernate=no nohibernate noresume swapaccount=1 psi=1 systemd.show_status=1"
+
+  - path: /etc/default/grub.d/99_systemd_debug.cfg
+    owner: root:root
+    permissions: '0644'
+    content: |
+      #GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX systemd.log_target=kmsg systemd.log_level=debug loglevel=7"
+
+  - path: /etc/modprobe.d/blacklist-ipmi.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      blacklist ipmi_si
+      install ipmi_si /bin/false
+      blacklist ipmi_devintf
+      install ipmi_devintf /bin/false
+      blacklist ipmi_msghandler
+      install ipmi_msghandler /bin/false
+
+  - path: /etc/initramfs-tools/modules
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ena
+      nvme
+
+  - path: /etc/systemd/system/ssh.service.d/00-ec2-instance-connect.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/sbin/sshd -D -o "AuthorizedKeysCommand /usr/share/ec2-instance-connect/eic_run_authorized_keys %%u %%f" -o "AuthorizedKeysCommandUser ec2-instance-connect" $SSHD_OPTS
+
+  #- path: /etc/systemd/system/amazon-ssm-agent.service.d/00-override.conf
+  #  owner: root:root
+  #  permissions: '0644'
+  #  content: |
+  #    [Unit]
+  #    Wants=network-online.target
+  #    After=network-online.target nss-lookup.target cloud-init.target
+  #    DefaultDependencies=no
+  #    ConditionFileIsExecutable=/usr/bin/amazon-ssm-agent
+
+  #- path: /etc/udev/rules.d/76-eni-increase-rx-buffers.rules
+  #  owner: root:root
+  #  permissions: '0644'
+  #  content: |
+  #    # Increase the rx and tx ring buffer size, use ethtool -g eth0 to verify
+  #    SUBSYSTEM=="net", ACTION=="add|change", KERNEL=="eth*|en*", DRIVERS=="ena", RUN+="/usr/sbin/ethtool -G %k rx 8192 tx 1024"
+
+  - path: /etc/sysctl.d/98-proxmox-tune.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      kernel.printk=4 4 1 7
+      kernel.sysrq=1
+      kernel.panic=30
+      kernel.poweroff_cmd="/usr/bin/systemctl poweroff --no-wall"
+      #kernel.poweroff_cmd="/usr/bin/systemctl poweroff --no-wall --force"
+      kernel.keys.root_maxkeys=1000000
+      kernel.keys.maxkeys=1000000
+      kernel.sched_autogroup_enabled=0
+      user.max_user_namespaces=28633
+      #vm.min_free_kbytes=524288
+      #vm.nr_hugepages=72
+      vm.swappiness=10
+      fs.nr_open=12000000
+      fs.file-max=9000000
+      fs.inotify.max_user_watches=1048576
+      fs.inotify.max_user_instances=1048576
+      fs.inotify.max_queued_events=1048576
+      #net.core.netdev_max_backlog = 16384
+      #net.core.somaxconn = 8192
+      # fq or fq_codel
+      net.core.default_qdisc=fq_codel
+       # Disable IPv6
+      net.ipv6.conf.all.disable_ipv6=1
+      net.ipv6.conf.default.disable_ipv6=1
+      # Enable IP forwarding
+      net.ipv4.ip_forward=1
+      net.ipv4.conf.all.forwarding=1
+      #net.ipv6.conf.default.forwarding=1
+      #net.ipv6.conf.all.forwarding=1
+      # Increase the outgoing port range
+      net.ipv4.ip_local_port_range=10000 65535
+      # Enable Multipath TCP
+      net.mptcp.enabled=1
+      # Bump the TTL from the default i.e. 64 to 127 on AWS
+      net.ipv4.ip_default_ttl=127
+      # Recommended for hosts with jumbo frames enabled
+      net.ipv4.tcp_mtu_probing=1
+      # Disables ICMP redirect sending
+      #net.ipv4.conf.<iface>.send_redirects=0
+      #net.ipv4.conf.all.send_redirects=0
+      #net.ipv4.conf.default.send_redirects=0
+      # Disables ICMP redirect acceptance
+      #net.ipv4.conf.all.accept_redirects=0
+      #net.ipv4.conf.default.accept_redirects=0
+      #net.ipv6.conf.all.accept_redirects=0
+      #net.ipv6.conf.default.accept_redirects=0
+      #net.ipv4.conf.all.secure_redirects=0
+      #net.ipv4.conf.default.secure_redirects=0
+      #net.ipv4.tcp_slow_start_after_idle=0
+
+# runcmd contains a list of either lists or a string each item will be executed in order at rc.local like level with output to the console
+# - runcmd only runs during the first boot
+# - if the item is a list, the items will be properly executed as if passed to execve(3) (with the first arg as the command).
+# - if the item is a string, it will be simply written to the file and will be interpreted by 'sh'
+runcmd:
+  - export VERSION_CODENAME=bookworm
+  - export DEBIAN_FRONTEND=noninteractive
+  - export APT_LISTCHANGES_FRONTEND=none
+  - export PRIMARY_NET_IFACE=$(ip -o link show | grep $(cloud-init query ds.meta_data.mac) | awk '{print $2}' | sed 's/:$//')
+  - export PRIMARY_IP=$(ip -4 a show $PRIMARY_NET_IFACE | grep -Po 'inet \K[0-9.]*')
+  - 'echo "$PRIMARY_IP proxmox.local proxmox" >> /etc/hosts'
+  - 'sed -i -e "s/# conf_force_conffold=YES/conf_force_conffold=YES/" /etc/ucf.conf'
+  - 'echo "deb [arch=amd64] http://download.proxmox.com/debian/pve $VERSION_CODENAME pve-no-subscription" > /etc/apt/sources.list.d/pve-no-subscription-repo.list'
+  - 'curl -vsSfL https://enterprise.proxmox.com/debian/proxmox-release-$VERSION_CODENAME.gpg -o /etc/apt/trusted.gpg.d/proxmox-release-$VERSION_CODENAME.gpg'
+  - 'apt-get update && apt-get full-upgrade -y'
+  - echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
+  # Note: Keep old config files to prevent grub config being changed (otherwise will break EC2 serial console):
+  # You can append a hyphen to the package name, then apt-get will remove that package.
+  - 'apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" --assume-yes install -f proxmox-ve proxmox-default-kernel proxmox-grub postfix open-iscsi netplan.io- unattended-upgrades- || true'
+  # https://forum.proxmox.com/threads/error-while-installing-fupdown2-version-3-2-0-1-pmx7.139630/post-683489
+  - '(test -f /tmp/.ifupdown2-first-install && rm -f /tmp/.ifupdown2-first-install); apt-get install -f; apt-get autoremove -y'
+  - 'test -d /etc/netplan && rm -rf /etc/netplan'
+  - |
+    echo "
+    # If you want to manage parts of the network configuration manually, please utilize the 'source' or 'source-directory' directives to do so.
+    # PVE will preserve these directives, but will NOT read its network configuration from sourced files, so do not attempt to move any of the PVE managed interfaces into external files!
+    #
+    # Include files from /etc/network/interfaces.d and dynamically generated configuration fragments are stored in /run.
+    source-directory /etc/network/interfaces.d
+    source-directory /run/network/interfaces.d
+
+    # The ifupdown2 in Proxmox 7 and below doesn't support source-directory, so use source instead.
+    # https://github.com/CumulusNetworks/ifupdown2/issues/191#issuecomment-764139971
+    #source /etc/network/interfaces.d/*
+    #source /run/network/interfaces.d/*
+
+    # Loopback
+    auto lo
+    iface lo inet loopback
+
+    # DHCP configuration
+    auto ${PRIMARY_NET_IFACE}
+    allow-hotplug ${PRIMARY_NET_IFACE}
+
+    #iface ${PRIMARY_NET_IFACE} inet manual
+    # Create bridge that uses DHCP
+    #auto vmbr0
+    #iface vmbr0 inet dhcp
+        #bridge_ports ${PRIMARY_NET_IFACE}
+        #bridge-stp off
+        #bridge-fd 0
+
+    iface ${PRIMARY_NET_IFACE} inet dhcp
+    # Add vmbr0 for NAT and guest VMs
+    #auto vmbr0
+    #iface vmbr0 inet static
+        #address  10.10.10.1/24
+        #bridge-ports none
+        #bridge-stp off
+        #bridge-fd 0
+        #bridge-vlan-aware no
+        #bridge-disable-mac-learning 1
+
+        #pre-up   brctl addif vmbr0
+        #post-up   iptables -t nat -A POSTROUTING -s '10.10.10.0/24' -o ${PRIMARY_NET_IFACE} -j MASQUERADE
+        #post-down iptables -t nat -D POSTROUTING -s '10.10.10.0/24' -o ${PRIMARY_NET_IFACE} -j MASQUERADE
+
+    #auto vmbr1
+    #iface vmbr1 inet static
+         # Routed network for guests with manually-allocated secondary private ENI IPs
+         #address 172.21.100.x/29
+         #bridge-ports none
+         #bridge-stp off
+         #bridge-fd 0
+
+         #post-up echo 1 > /proc/sys/net/ipv4/conf/${PRIMARY_NET_IFACE}/proxy_arp
+    " > /etc/network/interfaces
+  - '(test -f /etc/network/interfaces.new && mv /etc/network/interfaces.new /root/interfaces.new)'
+  - 'systemctl restart networking.service'
+  - 'curl -vsSfL https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb -o /tmp/amazon-ssm-agent.deb && apt install -y /tmp/amazon-ssm-agent.deb'
+  - 'mkdir -pv /usr/share/ec2-instance-connect'
+  - 'curl -vsSfL https://raw.githubusercontent.com/aws/aws-ec2-instance-connect-config/master/src/bin/eic_curl_authorized_keys -o /usr/share/ec2-instance-connect/eic_curl_authorized_keys'
+  - 'curl -vsSfL https://raw.githubusercontent.com/aws/aws-ec2-instance-connect-config/master/src/bin/eic_parse_authorized_keys -o /usr/share/ec2-instance-connect/eic_parse_authorized_keys'
+  - 'curl -vsSfL https://raw.githubusercontent.com/aws/aws-ec2-instance-connect-config/master/src/bin/eic_run_authorized_keys -o /usr/share/ec2-instance-connect/eic_run_authorized_keys && chmod +x /usr/share/ec2-instance-connect/*_keys'
+  - 'systemctl daemon-reload && systemctl restart --no-block ssh.service'
+  # Disable and stop unecessary services on ec2 e.g. high-availability clustering services and components.
+  - 'systemctl disable --now dnsmasq rpcbind pve-ha-crm.service pve-ha-lrm.service corosync.service'
+  # Disable systemd-networkd services, stopping will cause networking connectivity issues.
+  - 'systemctl disable systemd-networkd.socket systemd-networkd systemd-networkd-wait-online'
+  # Workaround for pveproxy local cert bug
+  # https://forum.proxmox.com/threads/clean-install-proxmox-ve-8-1-how-i-fixed-webinterface-not-working-failed-to-use-local-certificate-chain.145028/
+  - 'openssl genrsa -out /etc/pve/priv/pve-root-ca.key 4096'
+  #- 'openssl req -new -x509 -days 3650 -key pve-root-ca.key -out /etc/pve/pve-root-ca.pem -subj "/CN=Proxmox Virtual Environment Root CA/O=PVE Cluster Manager CA/"'
+  - 'openssl req -newkey rsa:4096 -nodes -x509 -days 365 -keyout /etc/pve/local/pve-ssl.key -out /etc/pve/local/pve-ssl.pem -subj "/CN=$(hostname -f)"'
+  - 'systemctl restart pveproxy'
+  #- 'pvecm updatecerts -f'
+  # (Optional) Proxmox host tuning and optimizations
+  - 'test -f /etc/apt/sources.list.d/pve-enterprise.list && rm -f /etc/apt/sources.list.d/pve-enterprise.list'
+  #- 'apt-get install -y openvswitch-switch'
+  #- 'apt-get install -y pve-headers module-assistant'
+  #- 'apt-get install -y ksm-control-daemon'
+  - 'tuned-adm profile virtual-host && tuned-adm active'
+  #- 'test -f /etc/dnsmasq.conf && echo "conf-dir=/etc/dnsmasq.d/,*.conf" >> /etc/dnsmasq.conf'
+  # Regenerate kernel and bootloader configuration
+  - 'update-initramfs -u -k all && update-grub'
+
+final_message: "Connect to the admin web interface (https://<ec2-ip-address>:8006). If you have a fresh install and have not added any users yet, you should select PAM authentication realm and login with root user account."
+
+#power_state:
+#  mode: reboot
+
+output: { all: "| tee -a /var/log/cloud-init-output.log" }
